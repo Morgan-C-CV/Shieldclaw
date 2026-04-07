@@ -2,6 +2,7 @@ import { codingTools, readTool } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelCompatConfig } from "../config/types.models.js";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
+import { ensureAccessZonesPolicyFile } from "../infra/access-zones-policy-file.js";
 import { resolveMergedSafeBinProfileFixtures } from "../infra/exec-safe-bin-runtime-policy.js";
 import { logWarn } from "../logger.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
@@ -403,11 +404,13 @@ export function createOpenClawCodingTools(options?: {
   const sandboxFsBridge = sandbox?.fsBridge;
   const allowWorkspaceWrites = sandbox?.workspaceAccess !== "ro";
   const workspaceRoot = resolveWorkspaceRoot(options?.workspaceDir);
+  ensureAccessZonesPolicyFile({ config: options?.config, defaultWorkspaceDir: workspaceRoot });
   const accessZones = {
     config: options?.config,
     sessionKey: options?.sessionKey,
     agentId,
     zoneIds: options?.zoneIds,
+    workspaceDir: workspaceRoot,
   };
   const workspaceOnly = fsPolicy.workspaceOnly;
   const applyPatchConfig = execConfig.applyPatch;

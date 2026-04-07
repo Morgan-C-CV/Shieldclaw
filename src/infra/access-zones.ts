@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveConfigPath } from "../config/paths.js";
 import type { AccessZone, AccessZoneAction, AccessZonesConfig } from "../config/types.security.js";
 import { logWarn } from "../logger.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
+import { loadAccessZonesPolicy, resolveAccessZonesPolicyPath } from "./access-zones-policy-file.js";
 import { resolveBoundaryPath } from "./boundary-path.js";
 import { isPathInside } from "./path-guards.js";
 
@@ -43,12 +45,15 @@ export class AccessZoneDeniedError extends Error {
   }
 }
 
-function getAccessZonesConfig(config?: OpenClawConfig): AccessZonesConfig | undefined {
-  return config?.security?.accessZones;
+function getAccessZonesConfig(params?: {
+  config?: OpenClawConfig;
+  defaultWorkspaceDir?: string;
+}): AccessZonesConfig | undefined {
+  return loadAccessZonesPolicy(params);
 }
 
 export function isAccessZonesEnabled(config?: OpenClawConfig): boolean {
-  return getAccessZonesConfig(config)?.enabled === true;
+  return getAccessZonesConfig({ config })?.enabled === true;
 }
 
 function shouldEnforce(config?: AccessZonesConfig): boolean {
@@ -136,7 +141,7 @@ function buildDenial(params: {
   const message =
     `ACCESS_ZONE_DENIED: ${params.reason}. ` +
     `Action "${params.action}" on "${params.absolutePath}" is not authorized for ${principalText}. ` +
-    "Ask the user to grant access by updating security.accessZones.";
+    `Ask the user to grant access by updating ${resolveAccessZonesPolicyPath()}.`;
   return {
     ok: false,
     code: "ACCESS_ZONE_DENIED",
@@ -156,7 +161,24 @@ function isProtectedAccessZonesConfigWrite(params: {
   if (params.action === "read") {
     return false;
   }
-  return path.resolve(params.absolutePath) === path.resolve(resolveConfigPath());
+  const resolved = path.resolve(params.absolutePath);
+  const targetRealPath = resolveExistingRealPath(resolved);
+  const configRealPath = resolveExistingRealPath(resolveConfigPath());
+  const policyRealPath = resolveExistingRealPath(resolveAccessZonesPolicyPath());
+  return (
+    resolved === path.resolve(resolveConfigPath()) ||
+    resolved === path.resolve(resolveAccessZonesPolicyPath()) ||
+    (targetRealPath !== undefined && targetRealPath === configRealPath) ||
+    (targetRealPath !== undefined && targetRealPath === policyRealPath)
+  );
+}
+
+function resolveExistingRealPath(filePath: string): string | undefined {
+  try {
+    return fs.realpathSync.native(filePath);
+  } catch {
+    return undefined;
+  }
 }
 
 function maybeLogViolation(
@@ -172,14 +194,15 @@ export async function authorizePathAccess(params: {
   config?: OpenClawConfig;
   action: AccessZoneAction;
   path: string;
+  defaultWorkspaceDir?: string;
   principal?: AccessZonePrincipalContext;
 }): Promise<AccessZoneAuthorizationResult> {
-  const accessZones = getAccessZonesConfig(params.config);
+  const accessZones = getAccessZonesConfig({
+    config: params.config,
+    defaultWorkspaceDir: params.defaultWorkspaceDir,
+  });
   const principals = resolveAccessZonePrincipalCandidates(params.principal);
   const absolutePath = path.resolve(params.path);
-  if (accessZones?.enabled !== true) {
-    return { ok: true };
-  }
 
   if (isProtectedAccessZonesConfigWrite({ absolutePath, action: params.action })) {
     const denial = buildDenial({
@@ -189,7 +212,11 @@ export async function authorizePathAccess(params: {
       principals,
     });
     maybeLogViolation(accessZones, denial);
-    return shouldEnforce(accessZones) ? denial : { ok: true };
+    return denial;
+  }
+
+  if (accessZones?.enabled !== true) {
+    return { ok: true };
   }
 
   const allowedZoneIds = normalizeZoneIds(params.principal?.zoneIds);
@@ -274,9 +301,13 @@ export async function resolveAuthorizedZoneIdsForPath(params: {
   config?: OpenClawConfig;
   action: AccessZoneAction;
   path: string;
+  defaultWorkspaceDir?: string;
   principal?: AccessZonePrincipalContext;
 }): Promise<string[]> {
-  const accessZones = getAccessZonesConfig(params.config);
+  const accessZones = getAccessZonesConfig({
+    config: params.config,
+    defaultWorkspaceDir: params.defaultWorkspaceDir,
+  });
   if (accessZones?.enabled !== true) {
     return [];
   }

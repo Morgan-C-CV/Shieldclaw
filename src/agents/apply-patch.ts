@@ -79,6 +79,7 @@ type ApplyPatchAccessZones = {
   sessionKey?: string;
   agentId?: string;
   zoneIds?: string[];
+  workspaceDir?: string;
 };
 
 type ApplyPatchOptions = {
@@ -339,6 +340,7 @@ async function assertPatchPathAccess(
     config: options.accessZones?.config,
     action,
     path: filePath,
+    defaultWorkspaceDir: options.accessZones?.workspaceDir,
     principal: {
       sessionKey: options.accessZones?.sessionKey,
       agentId: options.accessZones?.agentId,

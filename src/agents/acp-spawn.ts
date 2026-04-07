@@ -32,7 +32,8 @@ import { loadSessionStore } from "../config/sessions/store.js";
 import { resolveSessionTranscriptFile } from "../config/sessions/transcript.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { callGateway } from "../gateway/call.js";
-import { resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
+import { resolveAccessZonesPolicyPath } from "../infra/access-zones-policy-file.js";
+import { isAccessZonesEnabled, resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
 import { areHeartbeatsEnabled } from "../infra/heartbeat-wake.js";
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
@@ -1030,13 +1031,13 @@ export async function spawnAcpDirect(
     new Set((params.zoneIds ?? ctx.zoneIds ?? []).map((entry) => entry.trim()).filter(Boolean)),
   );
   let acpZoneIds: string[] | undefined;
-  if (cfg.security?.accessZones?.enabled === true) {
+  if (isAccessZonesEnabled(cfg)) {
+    const accessZonesPolicyPath = resolveAccessZonesPolicyPath();
     if (!runtimeCwd) {
       return createAcpSpawnFailure({
         status: "forbidden",
         errorCode: "cwd_resolution_failed",
-        error:
-          "ACCESS_ZONE_DENIED: ACP session has no working directory to bind to an Access Zone. Ask the user to grant access by updating security.accessZones.",
+        error: `ACCESS_ZONE_DENIED: ACP session has no working directory to bind to an Access Zone. Ask the user to grant access by updating ${accessZonesPolicyPath}.`,
       });
     }
     const authorized = await resolveAuthorizedZoneIdsForPath({
@@ -1055,7 +1056,7 @@ export async function spawnAcpDirect(
         errorCode: "cwd_resolution_failed",
         error:
           `ACCESS_ZONE_DENIED: ACP cwd "${runtimeCwd}" is not authorized for this requester. ` +
-          "Ask the user to grant access by updating security.accessZones.",
+          `Ask the user to grant access by updating ${accessZonesPolicyPath}.`,
       });
     }
     acpZoneIds = authorized;

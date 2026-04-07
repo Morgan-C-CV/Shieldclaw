@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveAccessZonesPolicyPath } from "../infra/access-zones-policy-file.js";
 
 vi.mock("@mariozechner/pi-ai", async () => {
   const original =
@@ -28,6 +29,7 @@ describe("FS tools with workspaceOnly=false", () => {
   let tmpDir: string;
   let workspaceDir: string;
   let outsideFile: string;
+  let previousConfigPath: string | undefined;
 
   const hasToolError = (result: { content: Array<{ type: string; text?: string }> }) =>
     result.content.some((content) => {
@@ -61,8 +63,18 @@ describe("FS tools with workspaceOnly=false", () => {
             workspaceOnly: false,
           },
         },
-        security: {
-          accessZones: {
+      },
+    });
+
+  async function writeAccessZonesPolicy() {
+    await fs.writeFile(
+      resolveAccessZonesPolicyPath(),
+      [
+        "# OpenClaw Access Zones",
+        "",
+        "```json5",
+        JSON.stringify(
+          {
             enabled: true,
             zones: [
               {
@@ -75,11 +87,17 @@ describe("FS tools with workspaceOnly=false", () => {
               },
             ],
           },
-        },
-      },
-    });
+          null,
+          2,
+        ),
+        "```",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+  }
 
-  const runFsTool = async (
+  const expectFsToolRejects = async (
     toolName: "write" | "edit" | "read",
     callId: string,
     input: Record<string, unknown>,
@@ -87,24 +105,29 @@ describe("FS tools with workspaceOnly=false", () => {
   ) => {
     const tool = toolsFor(workspaceOnly).find((candidate) => candidate.name === toolName);
     expect(tool).toBeDefined();
-    const result = await tool!.execute(callId, input);
-    expect(hasToolError(result)).toBe(false);
-    return result;
+    await expect(tool!.execute(callId, input)).rejects.toThrow();
   };
 
   beforeEach(async () => {
+    previousConfigPath = process.env.OPENCLAW_CONFIG_PATH;
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-"));
     workspaceDir = path.join(tmpDir, "workspace");
     await fs.mkdir(workspaceDir);
+    process.env.OPENCLAW_CONFIG_PATH = path.join(tmpDir, "openclaw.json");
     outsideFile = path.join(tmpDir, "outside.txt");
   });
 
   afterEach(async () => {
+    if (previousConfigPath === undefined) {
+      delete process.env.OPENCLAW_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("should allow write outside workspace when workspaceOnly=false", async () => {
-    await runFsTool(
+  it("blocks write outside the default Access Zone when workspaceOnly=false", async () => {
+    await expectFsToolRejects(
       "write",
       "test-call-1",
       {
@@ -113,11 +136,10 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       false,
     );
-    const content = await fs.readFile(outsideFile, "utf-8");
-    expect(content).toBe("test content");
   });
 
   it("should still block writes outside Access Zones when workspaceOnly=false", async () => {
+    await writeAccessZonesPolicy();
     const writeTool = toolsWithAccessZones().find((tool) => tool.name === "write");
     expect(writeTool).toBeDefined();
 
@@ -129,11 +151,10 @@ describe("FS tools with workspaceOnly=false", () => {
     ).rejects.toThrow(/ACCESS_ZONE_DENIED: .*Ask the user to grant access/);
   });
 
-  it("should allow write outside workspace via ../ path when workspaceOnly=false", async () => {
+  it("blocks write outside the default Access Zone via ../ path when workspaceOnly=false", async () => {
     const relativeOutsidePath = path.join("..", "outside-relative-write.txt");
-    const outsideRelativeFile = path.join(tmpDir, "outside-relative-write.txt");
 
-    await runFsTool(
+    await expectFsToolRejects(
       "write",
       "test-call-1b",
       {
@@ -142,14 +163,12 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       false,
     );
-    const content = await fs.readFile(outsideRelativeFile, "utf-8");
-    expect(content).toBe("relative test content");
   });
 
-  it("should allow edit outside workspace when workspaceOnly=false", async () => {
+  it("blocks edit outside the default Access Zone when workspaceOnly=false", async () => {
     await fs.writeFile(outsideFile, "old content");
 
-    await runFsTool(
+    await expectFsToolRejects(
       "edit",
       "test-call-2",
       {
@@ -158,16 +177,14 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       false,
     );
-    const content = await fs.readFile(outsideFile, "utf-8");
-    expect(content).toBe("new content");
   });
 
-  it("should allow edit outside workspace via ../ path when workspaceOnly=false", async () => {
+  it("blocks edit outside the default Access Zone via ../ path when workspaceOnly=false", async () => {
     const relativeOutsidePath = path.join("..", "outside-relative-edit.txt");
     const outsideRelativeFile = path.join(tmpDir, "outside-relative-edit.txt");
     await fs.writeFile(outsideRelativeFile, "old relative content");
 
-    await runFsTool(
+    await expectFsToolRejects(
       "edit",
       "test-call-2b",
       {
@@ -176,14 +193,12 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       false,
     );
-    const content = await fs.readFile(outsideRelativeFile, "utf-8");
-    expect(content).toBe("new relative content");
   });
 
-  it("should allow read outside workspace when workspaceOnly=false", async () => {
+  it("blocks read outside the default Access Zone when workspaceOnly=false", async () => {
     await fs.writeFile(outsideFile, "test read content");
 
-    await runFsTool(
+    await expectFsToolRejects(
       "read",
       "test-call-3",
       {
@@ -193,9 +208,9 @@ describe("FS tools with workspaceOnly=false", () => {
     );
   });
 
-  it("should allow write outside workspace when workspaceOnly is unset", async () => {
+  it("blocks write outside the default Access Zone when workspaceOnly is unset", async () => {
     const outsideUnsetFile = path.join(tmpDir, "outside-unset-write.txt");
-    await runFsTool(
+    await expectFsToolRejects(
       "write",
       "test-call-3a",
       {
@@ -204,14 +219,12 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       undefined,
     );
-    const content = await fs.readFile(outsideUnsetFile, "utf-8");
-    expect(content).toBe("unset write content");
   });
 
-  it("should allow edit outside workspace when workspaceOnly is unset", async () => {
+  it("blocks edit outside the default Access Zone when workspaceOnly is unset", async () => {
     const outsideUnsetFile = path.join(tmpDir, "outside-unset-edit.txt");
     await fs.writeFile(outsideUnsetFile, "before");
-    await runFsTool(
+    await expectFsToolRejects(
       "edit",
       "test-call-3b",
       {
@@ -220,8 +233,6 @@ describe("FS tools with workspaceOnly=false", () => {
       },
       undefined,
     );
-    const content = await fs.readFile(outsideUnsetFile, "utf-8");
-    expect(content).toBe("after");
   });
 
   it("should block write outside workspace when workspaceOnly=true", async () => {

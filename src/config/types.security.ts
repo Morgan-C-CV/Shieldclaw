@@ -16,6 +16,4 @@ export type AccessZonesConfig = {
   zones?: AccessZone[];
 };
 
-export type SecurityConfig = {
-  accessZones?: AccessZonesConfig;
-};
+export type SecurityConfig = Record<string, never>;

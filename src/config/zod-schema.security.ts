@@ -49,19 +49,15 @@ export const AccessZoneSchema = z
   })
   .strict();
 
-export const SecuritySchema = z
+export const AccessZonesConfigSchema = z
   .object({
-    accessZones: z
-      .object({
-        enabled: z.boolean().optional(),
-        enforce: z.boolean().optional(),
-        logViolations: z.boolean().optional(),
-        defaultMode: z.union([z.literal("deny"), z.literal("legacy-allow")]).optional(),
-        resolveSymlinks: z.boolean().optional(),
-        zones: z.array(AccessZoneSchema).max(256).optional(),
-      })
-      .strict()
-      .optional(),
+    enabled: z.boolean().optional(),
+    enforce: z.boolean().optional(),
+    logViolations: z.boolean().optional(),
+    defaultMode: z.union([z.literal("deny"), z.literal("legacy-allow")]).optional(),
+    resolveSymlinks: z.boolean().optional(),
+    zones: z.array(AccessZoneSchema).max(256).optional(),
   })
-  .strict()
-  .optional();
+  .strict();
+
+export const SecuritySchema = z.object({}).strict().optional();

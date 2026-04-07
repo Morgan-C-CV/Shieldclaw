@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
-import { resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
+import { resolveAccessZonesPolicyPath } from "../infra/access-zones-policy-file.js";
+import { isAccessZonesEnabled, resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
 import type { SubagentLifecycleHookRunner } from "../plugins/hooks.js";
 import {
   isValidAgentId,
@@ -150,8 +151,10 @@ async function resolveSpawnedZoneIds(params: {
   const requested = normalizeZoneIds(params.requestedZoneIds);
   const inherited = normalizeZoneIds(params.inheritedZoneIds);
   const candidateZoneIds = requested.length > 0 ? requested : inherited;
+  const accessZonesEnabled = isAccessZonesEnabled(params.config);
+  const accessZonesPolicyPath = resolveAccessZonesPolicyPath();
   if (candidateZoneIds.length > 0) {
-    if (!params.workspaceDir || params.config.security?.accessZones?.enabled !== true) {
+    if (!params.workspaceDir || !accessZonesEnabled) {
       return { ok: true, zoneIds: candidateZoneIds };
     }
     const verified = await resolveAuthorizedZoneIdsForPath({
@@ -169,12 +172,12 @@ async function resolveSpawnedZoneIds(params: {
         ok: false,
         error:
           `ACCESS_ZONE_DENIED: requested zoneIds (${candidateZoneIds.join(", ")}) are not authorized for this spawned session workspace. ` +
-          "Ask the user to grant access by updating security.accessZones.",
+          `Ask the user to grant access by updating ${accessZonesPolicyPath}.`,
       };
     }
     return { ok: true, zoneIds: verified };
   }
-  if (!params.workspaceDir || params.config.security?.accessZones?.enabled !== true) {
+  if (!params.workspaceDir || !accessZonesEnabled) {
     return { ok: true };
   }
   const inferred = await resolveAuthorizedZoneIdsForPath({
@@ -191,7 +194,7 @@ async function resolveSpawnedZoneIds(params: {
       ok: false,
       error:
         `ACCESS_ZONE_DENIED: spawned session workspace "${params.workspaceDir}" is not inside an authorized Access Zone. ` +
-        "Ask the user to grant access by updating security.accessZones.",
+        `Ask the user to grant access by updating ${accessZonesPolicyPath}.`,
     };
   }
   return { ok: true, zoneIds: inferred };

@@ -57,6 +57,7 @@ export type AccessZoneToolOptions = {
   sessionKey?: string;
   agentId?: string;
   zoneIds?: string[];
+  workspaceDir?: string;
 };
 
 type ReadTruncationDetails = {
@@ -746,6 +747,7 @@ async function assertToolPathAccess(
     config: accessZones?.config,
     action,
     path: absolutePath,
+    defaultWorkspaceDir: accessZones?.workspaceDir,
     principal: {
       sessionKey: accessZones?.sessionKey,
       agentId: accessZones?.agentId,
