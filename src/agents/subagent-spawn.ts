@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
+import { resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
 import type { SubagentLifecycleHookRunner } from "../plugins/hooks.js";
 import {
   isValidAgentId,
@@ -92,6 +93,7 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  zoneIds?: string[];
 };
 
 export type SpawnSubagentContext = {
@@ -106,6 +108,8 @@ export type SpawnSubagentContext = {
   requesterAgentIdOverride?: string;
   /** Explicit workspace directory for subagent to inherit (optional). */
   workspaceDir?: string;
+  /** Access Zone ids inherited by spawned sessions. */
+  zoneIds?: string[];
 };
 
 export const SUBAGENT_SPAWN_ACCEPTED_NOTE =
@@ -130,6 +134,68 @@ export type SpawnSubagentResult = {
 };
 
 export { splitModelRef } from "./subagent-spawn-plan.js";
+
+function normalizeZoneIds(zoneIds?: string[]): string[] {
+  return Array.from(new Set((zoneIds ?? []).map((value) => value.trim()).filter(Boolean)));
+}
+
+async function resolveSpawnedZoneIds(params: {
+  config: ReturnType<typeof loadConfig>;
+  requestedZoneIds?: string[];
+  inheritedZoneIds?: string[];
+  workspaceDir?: string;
+  requesterSessionKey?: string;
+  requesterAgentId?: string;
+}): Promise<{ ok: true; zoneIds?: string[] } | { ok: false; error: string }> {
+  const requested = normalizeZoneIds(params.requestedZoneIds);
+  const inherited = normalizeZoneIds(params.inheritedZoneIds);
+  const candidateZoneIds = requested.length > 0 ? requested : inherited;
+  if (candidateZoneIds.length > 0) {
+    if (!params.workspaceDir || params.config.security?.accessZones?.enabled !== true) {
+      return { ok: true, zoneIds: candidateZoneIds };
+    }
+    const verified = await resolveAuthorizedZoneIdsForPath({
+      config: params.config,
+      action: "read",
+      path: params.workspaceDir,
+      principal: {
+        sessionKey: params.requesterSessionKey,
+        agentId: params.requesterAgentId,
+        zoneIds: candidateZoneIds,
+      },
+    });
+    if (verified.length === 0) {
+      return {
+        ok: false,
+        error:
+          `ACCESS_ZONE_DENIED: requested zoneIds (${candidateZoneIds.join(", ")}) are not authorized for this spawned session workspace. ` +
+          "Ask the user to grant access by updating security.accessZones.",
+      };
+    }
+    return { ok: true, zoneIds: verified };
+  }
+  if (!params.workspaceDir || params.config.security?.accessZones?.enabled !== true) {
+    return { ok: true };
+  }
+  const inferred = await resolveAuthorizedZoneIdsForPath({
+    config: params.config,
+    action: "read",
+    path: params.workspaceDir,
+    principal: {
+      sessionKey: params.requesterSessionKey,
+      agentId: params.requesterAgentId,
+    },
+  });
+  if (inferred.length === 0) {
+    return {
+      ok: false,
+      error:
+        `ACCESS_ZONE_DENIED: spawned session workspace "${params.workspaceDir}" is not inside an authorized Access Zone. ` +
+        "Ask the user to grant access by updating security.accessZones.",
+    };
+  }
+  return { ok: true, zoneIds: inferred };
+}
 
 async function updateSubagentSessionStore(
   storePath: string,
@@ -675,9 +741,33 @@ export async function spawnSubagentDirect(
         targetAgentId !== requesterAgentId ? undefined : toolSpawnMetadata.workspaceDir,
     }),
   });
+  const spawnedZoneIds = await resolveSpawnedZoneIds({
+    config: cfg,
+    requestedZoneIds: params.zoneIds,
+    inheritedZoneIds: ctx.zoneIds,
+    workspaceDir: spawnedMetadata.workspaceDir,
+    requesterSessionKey: requesterInternalKey,
+    requesterAgentId,
+  });
+  if (!spawnedZoneIds.ok) {
+    await cleanupFailedSpawnBeforeAgentStart({
+      childSessionKey,
+      attachmentAbsDir,
+      emitLifecycleHooks: threadBindingReady,
+      deleteTranscript: true,
+    });
+    return {
+      status: "forbidden",
+      error: spawnedZoneIds.error,
+      childSessionKey,
+    };
+  }
   const spawnLineagePatchError = await patchChildSession({
     spawnedBy: spawnedByKey,
     ...(spawnedMetadata.workspaceDir ? { spawnedWorkspaceDir: spawnedMetadata.workspaceDir } : {}),
+    ...(spawnedZoneIds.zoneIds && spawnedZoneIds.zoneIds.length > 0
+      ? { zoneIds: spawnedZoneIds.zoneIds }
+      : {}),
   });
   if (spawnLineagePatchError) {
     await cleanupFailedSpawnBeforeAgentStart({

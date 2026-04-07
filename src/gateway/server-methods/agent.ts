@@ -582,6 +582,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         label: labelValue,
         spawnedBy: spawnedByValue,
         spawnedWorkspaceDir: entry?.spawnedWorkspaceDir,
+        zoneIds: entry?.zoneIds,
         spawnDepth: entry?.spawnDepth,
         channel: entry?.channel ?? request.channel?.trim(),
         groupId: resolvedGroupId ?? entry?.groupId,

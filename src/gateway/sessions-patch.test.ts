@@ -357,6 +357,19 @@ describe("gateway sessions patch", () => {
     expect(entry.spawnedWorkspaceDir).toBe("/tmp/subagent-workspace");
   });
 
+  test("sets zoneIds for subagent sessions", async () => {
+    const entry = expectPatchOk(
+      await runPatch({
+        storeKey: "agent:main:subagent:child",
+        patch: {
+          key: "agent:main:subagent:child",
+          zoneIds: [" workspace ", "workspace", "docs"],
+        },
+      }),
+    );
+    expect(entry.zoneIds).toEqual(["workspace", "docs"]);
+  });
+
   test("sets spawnDepth for ACP sessions", async () => {
     const entry = expectPatchOk(
       await runPatch({
@@ -365,6 +378,13 @@ describe("gateway sessions patch", () => {
       }),
     );
     expect(entry.spawnDepth).toBe(2);
+  });
+
+  test("rejects zoneIds on non-subagent sessions", async () => {
+    const result = await runPatch({
+      patch: { key: MAIN_SESSION_KEY, zoneIds: ["workspace"] },
+    });
+    expectPatchError(result, "zoneIds is only supported");
   });
 
   test("rejects spawnDepth on non-subagent sessions", async () => {

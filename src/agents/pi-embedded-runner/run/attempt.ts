@@ -487,6 +487,7 @@ export async function runEmbeddedAttempt(
             sessionKey: sandboxSessionKey,
             sessionId: params.sessionId,
             runId: params.runId,
+            zoneIds: params.zoneIds,
             agentDir,
             workspaceDir: effectiveWorkspace,
             // When sandboxing uses a copied workspace (`ro` or `none`), effectiveWorkspace points

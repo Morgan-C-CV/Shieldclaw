@@ -89,6 +89,7 @@ const SessionsSpawnToolSchema = Type.Object({
   model: Type.Optional(Type.String()),
   thinking: Type.Optional(Type.String()),
   cwd: Type.Optional(Type.String()),
+  zoneIds: Type.Optional(Type.Array(Type.String())),
   runTimeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   // Back-compat: older callers used timeoutSeconds for this tool.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
@@ -162,6 +163,9 @@ export function createSessionsSpawnTool(
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
       const cwd = readStringParam(params, "cwd");
+      const zoneIds = Array.isArray(params.zoneIds)
+        ? Array.from(new Set(params.zoneIds.map((entry) => String(entry).trim()).filter(Boolean)))
+        : undefined;
       const mode = params.mode === "run" || params.mode === "session" ? params.mode : undefined;
       const cleanup =
         params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
@@ -221,6 +225,7 @@ export function createSessionsSpawnTool(
             agentId: requestedAgentId,
             resumeSessionId,
             cwd,
+            zoneIds,
             mode: mode === "run" || mode === "session" ? mode : undefined,
             thread,
             sandbox,
@@ -317,6 +322,7 @@ export function createSessionsSpawnTool(
             params.attachAs && typeof params.attachAs === "object"
               ? readStringParam(params.attachAs as Record<string, unknown>, "mountPath")
               : undefined,
+          zoneIds,
         },
         {
           agentSessionKey: opts?.agentSessionKey,
@@ -329,6 +335,7 @@ export function createSessionsSpawnTool(
           agentGroupSpace: opts?.agentGroupSpace,
           requesterAgentIdOverride: opts?.requesterAgentIdOverride,
           workspaceDir: opts?.workspaceDir,
+          zoneIds: opts?.zoneIds,
         },
       );
 

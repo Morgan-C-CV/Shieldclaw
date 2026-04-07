@@ -144,6 +144,36 @@ export async function applySessionsPatchToStore(params: {
     }
   }
 
+  if ("zoneIds" in patch) {
+    const raw = patch.zoneIds;
+    if (raw === null) {
+      if (existing?.zoneIds && existing.zoneIds.length > 0) {
+        return invalid("zoneIds cannot be cleared once set");
+      }
+    } else if (raw !== undefined) {
+      if (!supportsSpawnLineage(storeKey)) {
+        return invalid("zoneIds is only supported for subagent:* or acp:* sessions");
+      }
+      if (!Array.isArray(raw)) {
+        return invalid("invalid zoneIds: expected array");
+      }
+      const normalized = Array.from(
+        new Set(raw.map((entry) => String(entry).trim()).filter(Boolean)),
+      );
+      if (normalized.length === 0) {
+        return invalid("invalid zoneIds: empty");
+      }
+      if (
+        existing?.zoneIds &&
+        (existing.zoneIds.length !== normalized.length ||
+          existing.zoneIds.some((value, index) => value !== normalized[index]))
+      ) {
+        return invalid("zoneIds cannot be changed once set");
+      }
+      next.zoneIds = normalized;
+    }
+  }
+
   if ("spawnDepth" in patch) {
     const raw = patch.spawnDepth;
     if (raw === null) {

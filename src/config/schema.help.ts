@@ -14,6 +14,27 @@ export const FIELD_HELP: Record<string, string> = {
     "Maximum time in milliseconds allowed for shell environment resolution before fallback behavior applies. Use tighter timeouts for faster startup, or increase when shell initialization is heavy.",
   "env.vars":
     "Explicit key/value environment variable overrides merged into runtime process environment for OpenClaw. Use this for deterministic env configuration instead of relying only on shell profile side effects.",
+  security:
+    "Security policy controls for resource-plane authorization. Keep these settings user-managed; agents can request Access Zone changes but must not grant themselves broader filesystem access.",
+  "security.accessZones":
+    "Path-scoped filesystem authorization. When enabled, read/write/admin access requires an authorized zone root and matching principal permission.",
+  "security.accessZones.enabled":
+    "Enable Access Zones. When true, filesystem tool paths must match an authorized Access Zone unless an explicit migration mode allows legacy access.",
+  "security.accessZones.enforce":
+    "When false, Access Zone violations are audit-only. Keep true for hard isolation.",
+  "security.accessZones.logViolations":
+    "Log Access Zone denials or audit-only violations so operators can grant explicit access where needed.",
+  "security.accessZones.defaultMode":
+    'Behavior for unmatched paths: "deny" blocks access, while "legacy-allow" preserves old behavior for migration.',
+  "security.accessZones.resolveSymlinks":
+    "Resolve canonical real paths before Access Zone checks to block symlink and traversal escapes.",
+  "security.accessZones.zones":
+    "Filesystem Access Zone allowlist entries. Users define roots and per-principal read/write/admin permissions here.",
+  "security.accessZones.zones[].id": "Stable Access Zone id used for session binding.",
+  "security.accessZones.zones[].kind": 'Access Zone kind. MVP supports "filesystem" only.',
+  "security.accessZones.zones[].roots": "Absolute filesystem roots covered by this Access Zone.",
+  "security.accessZones.zones[].principals":
+    'Per-principal permissions for this zone, keyed by scoped principals such as "agent:main" or "session:agent:main:main".',
   wizard:
     "Setup wizard state tracking fields that record the most recent guided setup run details. Keep these fields for observability and troubleshooting of setup flows across upgrades.",
   "wizard.lastRunAt":

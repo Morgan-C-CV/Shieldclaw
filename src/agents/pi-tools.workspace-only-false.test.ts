@@ -52,6 +52,33 @@ describe("FS tools with workspaceOnly=false", () => {
             },
     });
 
+  const toolsWithAccessZones = () =>
+    createOpenClawCodingTools({
+      workspaceDir,
+      config: {
+        tools: {
+          fs: {
+            workspaceOnly: false,
+          },
+        },
+        security: {
+          accessZones: {
+            enabled: true,
+            zones: [
+              {
+                id: "workspace",
+                kind: "filesystem",
+                roots: [workspaceDir],
+                principals: {
+                  "runtime:agent": ["read", "write"],
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
   const runFsTool = async (
     toolName: "write" | "edit" | "read",
     callId: string,
@@ -88,6 +115,18 @@ describe("FS tools with workspaceOnly=false", () => {
     );
     const content = await fs.readFile(outsideFile, "utf-8");
     expect(content).toBe("test content");
+  });
+
+  it("should still block writes outside Access Zones when workspaceOnly=false", async () => {
+    const writeTool = toolsWithAccessZones().find((tool) => tool.name === "write");
+    expect(writeTool).toBeDefined();
+
+    await expect(
+      writeTool!.execute("test-call-access-zone-deny", {
+        path: outsideFile,
+        content: "blocked",
+      }),
+    ).rejects.toThrow(/ACCESS_ZONE_DENIED: .*Ask the user to grant access/);
   });
 
   it("should allow write outside workspace via ../ path when workspaceOnly=false", async () => {

@@ -32,6 +32,7 @@ import { loadSessionStore } from "../config/sessions/store.js";
 import { resolveSessionTranscriptFile } from "../config/sessions/transcript.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { callGateway } from "../gateway/call.js";
+import { resolveAuthorizedZoneIdsForPath } from "../infra/access-zones.js";
 import { areHeartbeatsEnabled } from "../infra/heartbeat-wake.js";
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
@@ -81,6 +82,7 @@ export type SpawnAcpParams = {
   agentId?: string;
   resumeSessionId?: string;
   cwd?: string;
+  zoneIds?: string[];
   mode?: SpawnAcpMode;
   thread?: boolean;
   sandbox?: SpawnAcpSandboxMode;
@@ -95,6 +97,7 @@ export type SpawnAcpContext = {
   agentThreadId?: string | number;
   /** Group chat ID for channels that distinguish group vs. topic (e.g. Telegram). */
   agentGroupId?: string;
+  zoneIds?: string[];
   sandboxed?: boolean;
 };
 
@@ -924,6 +927,7 @@ export async function spawnAcpDirect(
     cfg,
     requesterSessionKey: ctx.agentSessionKey,
   });
+  const requesterAgentId = parseAgentSessionKey(requesterInternalKey)?.agentId;
   if (!isAcpEnabledByPolicy(cfg)) {
     return createAcpSpawnFailure({
       status: "forbidden",
@@ -1022,6 +1026,42 @@ export async function spawnAcpDirect(
       error: summarizeError(error),
     });
   }
+  const requestedZoneIds = Array.from(
+    new Set((params.zoneIds ?? ctx.zoneIds ?? []).map((entry) => entry.trim()).filter(Boolean)),
+  );
+  let acpZoneIds: string[] | undefined;
+  if (cfg.security?.accessZones?.enabled === true) {
+    if (!runtimeCwd) {
+      return createAcpSpawnFailure({
+        status: "forbidden",
+        errorCode: "cwd_resolution_failed",
+        error:
+          "ACCESS_ZONE_DENIED: ACP session has no working directory to bind to an Access Zone. Ask the user to grant access by updating security.accessZones.",
+      });
+    }
+    const authorized = await resolveAuthorizedZoneIdsForPath({
+      config: cfg,
+      action: "read",
+      path: runtimeCwd,
+      principal: {
+        sessionKey: requesterInternalKey,
+        agentId: requesterAgentId,
+        zoneIds: requestedZoneIds.length > 0 ? requestedZoneIds : undefined,
+      },
+    });
+    if (authorized.length === 0) {
+      return createAcpSpawnFailure({
+        status: "forbidden",
+        errorCode: "cwd_resolution_failed",
+        error:
+          `ACCESS_ZONE_DENIED: ACP cwd "${runtimeCwd}" is not authorized for this requester. ` +
+          "Ask the user to grant access by updating security.accessZones.",
+      });
+    }
+    acpZoneIds = authorized;
+  } else if (requestedZoneIds.length > 0) {
+    acpZoneIds = requestedZoneIds;
+  }
 
   let preparedBinding: PreparedAcpThreadBinding | null = null;
   if (requestThreadBinding) {
@@ -1053,6 +1093,7 @@ export async function spawnAcpDirect(
         key: sessionKey,
         spawnedBy: requesterInternalKey,
         ...(params.label ? { label: params.label } : {}),
+        ...(acpZoneIds && acpZoneIds.length > 0 ? { zoneIds: acpZoneIds } : {}),
       },
       timeoutMs: 10_000,
     });

@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { createEditTool, createReadTool, createWriteTool } from "@mariozechner/pi-coding-agent";
+import type { OpenClawConfig } from "../config/config.js";
+import { assertAuthorizedPathAccess } from "../infra/access-zones.js";
 import {
   appendFileWithinRoot,
   SafeOpenError,
@@ -48,6 +50,13 @@ const MAX_ADAPTIVE_READ_PAGES = 8;
 type OpenClawReadToolOptions = {
   modelContextWindowTokens?: number;
   imageSanitization?: ImageSanitizationLimits;
+};
+
+export type AccessZoneToolOptions = {
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  zoneIds?: string[];
 };
 
 type ReadTruncationDetails = {
@@ -576,6 +585,7 @@ type SandboxToolParams = {
   bridge: SandboxFsBridge;
   modelContextWindowTokens?: number;
   imageSanitization?: ImageSanitizationLimits;
+  accessZones?: AccessZoneToolOptions;
 };
 
 export function createSandboxedReadTool(params: SandboxToolParams) {
@@ -607,20 +617,39 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
   return wrapToolParamValidation(withRecovery, REQUIRED_PARAM_GROUPS.edit);
 }
 
-export function createHostWorkspaceWriteTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceReadTool(
+  root: string,
+  options?: OpenClawReadToolOptions & { accessZones?: AccessZoneToolOptions },
+) {
+  const base = createReadTool(root, {
+    operations: createHostReadOperations(options),
+  }) as unknown as AnyAgentTool;
+  return createOpenClawReadTool(base, options);
+}
+
+export function createHostWorkspaceWriteTool(
+  root: string,
+  options?: { workspaceOnly?: boolean; accessZones?: AccessZoneToolOptions },
+) {
   const base = createWriteTool(root, {
     operations: createHostWriteOperations(root, options),
   }) as unknown as AnyAgentTool;
   return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
 }
 
-export function createHostWorkspaceEditTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceEditTool(
+  root: string,
+  options?: { workspaceOnly?: boolean; accessZones?: AccessZoneToolOptions },
+) {
   const base = createEditTool(root, {
     operations: createHostEditOperations(root, options),
   }) as unknown as AnyAgentTool;
   const withRecovery = wrapEditToolWithRecovery(base, {
     root,
-    readFile: (absolutePath: string) => fs.readFile(absolutePath, "utf-8"),
+    readFile: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
+      return fs.readFile(absolutePath, "utf-8");
+    },
   });
   return wrapToolParamValidation(withRecovery, REQUIRED_PARAM_GROUPS.edit);
 }
@@ -655,15 +684,19 @@ export function createOpenClawReadTool(
 
 function createSandboxReadOperations(params: SandboxToolParams) {
   return {
-    readFile: (absolutePath: string) =>
-      params.bridge.readFile({ filePath: absolutePath, cwd: params.root }),
+    readFile: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, params.accessZones);
+      return params.bridge.readFile({ filePath: absolutePath, cwd: params.root });
+    },
     access: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, params.accessZones);
       const stat = await params.bridge.stat({ filePath: absolutePath, cwd: params.root });
       if (!stat) {
         throw createFsAccessError("ENOENT", absolutePath);
       }
     },
     detectImageMimeType: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, params.accessZones);
       const buffer = await params.bridge.readFile({ filePath: absolutePath, cwd: params.root });
       const mime = await detectMime({ buffer, filePath: absolutePath });
       return mime && mime.startsWith("image/") ? mime : undefined;
@@ -674,9 +707,11 @@ function createSandboxReadOperations(params: SandboxToolParams) {
 function createSandboxWriteOperations(params: SandboxToolParams) {
   return {
     mkdir: async (dir: string) => {
+      await assertToolPathAccess("write", dir, params.accessZones);
       await params.bridge.mkdirp({ filePath: dir, cwd: params.root });
     },
     writeFile: async (absolutePath: string, content: string) => {
+      await assertToolPathAccess("write", absolutePath, params.accessZones);
       await params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content });
     },
   } as const;
@@ -684,11 +719,16 @@ function createSandboxWriteOperations(params: SandboxToolParams) {
 
 function createSandboxEditOperations(params: SandboxToolParams) {
   return {
-    readFile: (absolutePath: string) =>
-      params.bridge.readFile({ filePath: absolutePath, cwd: params.root }),
-    writeFile: (absolutePath: string, content: string) =>
-      params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content }),
+    readFile: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, params.accessZones);
+      return params.bridge.readFile({ filePath: absolutePath, cwd: params.root });
+    },
+    writeFile: async (absolutePath: string, content: string) => {
+      await assertToolPathAccess("write", absolutePath, params.accessZones);
+      return params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content });
+    },
     access: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, params.accessZones);
       const stat = await params.bridge.stat({ filePath: absolutePath, cwd: params.root });
       if (!stat) {
         throw createFsAccessError("ENOENT", absolutePath);
@@ -697,35 +737,84 @@ function createSandboxEditOperations(params: SandboxToolParams) {
   } as const;
 }
 
-async function writeHostFile(absolutePath: string, content: string) {
+async function assertToolPathAccess(
+  action: "read" | "write" | "admin",
+  absolutePath: string,
+  accessZones?: AccessZoneToolOptions,
+) {
+  await assertAuthorizedPathAccess({
+    config: accessZones?.config,
+    action,
+    path: absolutePath,
+    principal: {
+      sessionKey: accessZones?.sessionKey,
+      agentId: accessZones?.agentId,
+      zoneIds: accessZones?.zoneIds,
+    },
+  });
+}
+
+async function writeHostFile(
+  absolutePath: string,
+  content: string,
+  accessZones?: AccessZoneToolOptions,
+) {
+  await assertToolPathAccess("write", absolutePath, accessZones);
   const resolved = path.resolve(absolutePath);
   await fs.mkdir(path.dirname(resolved), { recursive: true });
   await fs.writeFile(resolved, content, "utf-8");
 }
 
-function createHostWriteOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostReadOperations(options?: { accessZones?: AccessZoneToolOptions }) {
+  return {
+    readFile: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
+      return await fs.readFile(path.resolve(absolutePath));
+    },
+    access: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
+      await fs.access(path.resolve(absolutePath));
+    },
+    detectImageMimeType: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
+      const resolved = path.resolve(absolutePath);
+      const buffer = await fs.readFile(resolved);
+      const mime = await detectMime({ buffer, filePath: resolved });
+      return mime && mime.startsWith("image/") ? mime : undefined;
+    },
+  } as const;
+}
+
+function createHostWriteOperations(
+  root: string,
+  options?: { workspaceOnly?: boolean; accessZones?: AccessZoneToolOptions },
+) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
     // When workspaceOnly is false, allow writes anywhere on the host
     return {
       mkdir: async (dir: string) => {
+        await assertToolPathAccess("write", dir, options?.accessZones);
         const resolved = path.resolve(dir);
         await fs.mkdir(resolved, { recursive: true });
       },
-      writeFile: writeHostFile,
+      writeFile: (absolutePath: string, content: string) =>
+        writeHostFile(absolutePath, content, options?.accessZones),
     } as const;
   }
 
   // When workspaceOnly is true, enforce workspace boundary
   return {
     mkdir: async (dir: string) => {
+      await assertToolPathAccess("write", dir, options?.accessZones);
       const relative = toRelativeWorkspacePath(root, dir, { allowRoot: true });
       const resolved = relative ? path.resolve(root, relative) : path.resolve(root);
       await assertSandboxPath({ filePath: resolved, cwd: root, root });
       await fs.mkdir(resolved, { recursive: true });
     },
     writeFile: async (absolutePath: string, content: string) => {
+      await assertToolPathAccess("write", absolutePath, options?.accessZones);
       const relative = toRelativeWorkspacePath(root, absolutePath);
       await writeFileWithinRoot({
         rootDir: root,
@@ -737,18 +826,24 @@ function createHostWriteOperations(root: string, options?: { workspaceOnly?: boo
   } as const;
 }
 
-function createHostEditOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostEditOperations(
+  root: string,
+  options?: { workspaceOnly?: boolean; accessZones?: AccessZoneToolOptions },
+) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
     // When workspaceOnly is false, allow edits anywhere on the host
     return {
       readFile: async (absolutePath: string) => {
+        await assertToolPathAccess("read", absolutePath, options?.accessZones);
         const resolved = path.resolve(absolutePath);
         return await fs.readFile(resolved);
       },
-      writeFile: writeHostFile,
+      writeFile: (absolutePath: string, content: string) =>
+        writeHostFile(absolutePath, content, options?.accessZones),
       access: async (absolutePath: string) => {
+        await assertToolPathAccess("read", absolutePath, options?.accessZones);
         const resolved = path.resolve(absolutePath);
         await fs.access(resolved);
       },
@@ -758,6 +853,7 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
   // When workspaceOnly is true, enforce workspace boundary
   return {
     readFile: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
       const relative = toRelativeWorkspacePath(root, absolutePath);
       const safeRead = await readFileWithinRoot({
         rootDir: root,
@@ -766,6 +862,7 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
       return safeRead.buffer;
     },
     writeFile: async (absolutePath: string, content: string) => {
+      await assertToolPathAccess("write", absolutePath, options?.accessZones);
       const relative = toRelativeWorkspacePath(root, absolutePath);
       await writeFileWithinRoot({
         rootDir: root,
@@ -775,6 +872,7 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
       });
     },
     access: async (absolutePath: string) => {
+      await assertToolPathAccess("read", absolutePath, options?.accessZones);
       let relative: string;
       try {
         relative = toRelativeWorkspacePath(root, absolutePath);

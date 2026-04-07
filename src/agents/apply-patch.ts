@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
+import type { OpenClawConfig } from "../config/config.js";
+import { assertAuthorizedPathAccess } from "../infra/access-zones.js";
 import { openBoundaryFile, type BoundaryFileOpenResult } from "../infra/boundary-file-read.js";
 import {
   mkdirPathWithinRoot,
@@ -72,11 +74,19 @@ type SandboxApplyPatchConfig = {
   bridge: SandboxFsBridge;
 };
 
+type ApplyPatchAccessZones = {
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  zoneIds?: string[];
+};
+
 type ApplyPatchOptions = {
   cwd: string;
   sandbox?: SandboxApplyPatchConfig;
   /** Restrict patch paths to the workspace root (cwd). Default: true. Set false to opt out. */
   workspaceOnly?: boolean;
+  accessZones?: ApplyPatchAccessZones;
   signal?: AbortSignal;
 };
 
@@ -87,7 +97,12 @@ const applyPatchSchema = Type.Object({
 });
 
 export function createApplyPatchTool(
-  options: { cwd?: string; sandbox?: SandboxApplyPatchConfig; workspaceOnly?: boolean } = {},
+  options: {
+    cwd?: string;
+    sandbox?: SandboxApplyPatchConfig;
+    workspaceOnly?: boolean;
+    accessZones?: ApplyPatchAccessZones;
+  } = {},
 ): AgentTool<typeof applyPatchSchema, ApplyPatchToolDetails> {
   const cwd = options.cwd ?? process.cwd();
   const sandbox = options.sandbox;
@@ -115,6 +130,7 @@ export function createApplyPatchTool(
         cwd,
         sandbox,
         workspaceOnly,
+        accessZones: options.accessZones,
         signal,
       });
 
@@ -235,17 +251,28 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
     const { root, bridge } = options.sandbox;
     return {
       readFile: async (filePath) => {
+        await assertPatchPathAccess("read", filePath, options);
         const buf = await bridge.readFile({ filePath, cwd: root });
         return buf.toString("utf8");
       },
-      writeFile: (filePath, content) => bridge.writeFile({ filePath, cwd: root, data: content }),
-      remove: (filePath) => bridge.remove({ filePath, cwd: root, force: false }),
-      mkdirp: (dir) => bridge.mkdirp({ filePath: dir, cwd: root }),
+      writeFile: async (filePath, content) => {
+        await assertPatchPathAccess("write", filePath, options);
+        return bridge.writeFile({ filePath, cwd: root, data: content });
+      },
+      remove: async (filePath) => {
+        await assertPatchPathAccess("write", filePath, options);
+        return bridge.remove({ filePath, cwd: root, force: false });
+      },
+      mkdirp: async (dir) => {
+        await assertPatchPathAccess("write", dir, options);
+        return bridge.mkdirp({ filePath: dir, cwd: root });
+      },
     };
   }
   const workspaceOnly = options.workspaceOnly !== false;
   return {
     readFile: async (filePath) => {
+      await assertPatchPathAccess("read", filePath, options);
       if (!workspaceOnly) {
         return await fs.readFile(filePath, "utf8");
       }
@@ -262,6 +289,7 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       }
     },
     writeFile: async (filePath, content) => {
+      await assertPatchPathAccess("write", filePath, options);
       if (!workspaceOnly) {
         await fs.writeFile(filePath, content, "utf8");
         return;
@@ -275,6 +303,7 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       });
     },
     remove: async (filePath) => {
+      await assertPatchPathAccess("write", filePath, options);
       if (!workspaceOnly) {
         await fs.rm(filePath);
         return;
@@ -286,6 +315,7 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       });
     },
     mkdirp: async (dir) => {
+      await assertPatchPathAccess("write", dir, options);
       if (!workspaceOnly) {
         await fs.mkdir(dir, { recursive: true });
         return;
@@ -298,6 +328,23 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       });
     },
   };
+}
+
+async function assertPatchPathAccess(
+  action: "read" | "write" | "admin",
+  filePath: string,
+  options: ApplyPatchOptions,
+) {
+  await assertAuthorizedPathAccess({
+    config: options.accessZones?.config,
+    action,
+    path: filePath,
+    principal: {
+      sessionKey: options.accessZones?.sessionKey,
+      agentId: options.accessZones?.agentId,
+      zoneIds: options.accessZones?.zoneIds,
+    },
+  });
 }
 
 async function ensureDir(filePath: string, ops: PatchFileOps) {
