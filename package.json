@@ -1,17 +1,17 @@
 {
   "name": "shieldclaw",
-  "version": "2026.4.6",
-  "description": "Multi-channel AI gateway with extensible messaging integrations",
+  "version": "2026.4.8",
+  "description": "Security-hardened fork of OpenClaw for untrusted CLI environments, enforcing strict workspace-only agent sandboxing.",
   "keywords": [],
-  "homepage": "https://github.com/wangmorgan/shieldclaw#readme",
+  "homepage": "https://github.com/Morgan-C-CV/Shieldclaw#readme",
   "bugs": {
-    "url": "https://github.com/wangmorgan/shieldclaw/issues"
+    "url": "https://github.com/Morgan-C-CV/Shieldclaw/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wangmorgan/shieldclaw.git"
+    "url": "git+https://github.com/Morgan-C-CV/Shieldclaw.git"
   },
   "bin": {
     "shieldclaw": "openclaw.mjs"

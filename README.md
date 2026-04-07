@@ -36,7 +36,7 @@ npm install -g shieldclaw@latest
 # or
 pnpm add -g shieldclaw@latest
 # or
-bunx https://github.com/wangmorgan/shieldclaw
+bunx https://github.com/Morgan-C-CV/Shieldclaw
 ```
 
 Run onboarding:
@@ -51,7 +51,7 @@ ShieldClaw reuses the OpenClaw RPC runtime under the hood, so you can pair the C
 
 ## Contributing
 
-Submit PRs to the `wangmorgan/shieldclaw` repository. ShieldClaw only accepts patches that preserve the Access Zones guardrails or improve documentation around their usage. If you believe you’ve found a new issue in the policy, update `ACCESS_ZONES.md`, add tests in `src/infra`, and link the upstream OpenClaw report once one exists so maintainers can follow along.
+Submit PRs to the `Morgan-C-CV/Shieldclaw` repository. ShieldClaw only accepts patches that preserve the Access Zones guardrails or improve documentation around their usage. If you believe you’ve found a new issue in the policy, update `ACCESS_ZONES.md`, add tests in `src/infra`, and link the upstream OpenClaw report once one exists so maintainers can follow along.
 
 ## License
 
