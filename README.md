@@ -1,6 +1,6 @@
-# 🛡️ ShieldClaw — Secure Fork of OpenClaw
+# ShieldClaw - Secure Fork of OpenClaw
 
-ShieldClaw is a focused fork of OpenClaw that exists solely to harden its agent sandbox configuration for environments where a fully trusted CLI can’t be assumed. While the upstream project works through feature and security evolution, ShieldClaw permanently keeps the CLI name, identity, and docs aligned with the security guardrails this fork imposes.
+ShieldClaw is a focused fork of OpenClaw that exists solely to harden its agent sandbox configuration for environments where a fully trusted CLI can't be assumed. While the upstream project works through feature and security evolution, ShieldClaw permanently keeps the CLI name, identity, and docs aligned with the security guardrails this fork imposes.
 
 ## Why this fork exists
 
@@ -8,16 +8,16 @@ During routine security work we discovered that the OpenClaw CLI profiles could 
 
 - Access Zones (/security access zones / path-based allowlisten) were defined only inside `openclaw.json`, which meant per-profile or per-session JSON parsing could simply omit them; `node scripts/run-node.mjs --profile safeclaw-test tui` ran with `security.accessZones.enabled` defaulting to `false`, so `pi-tools.read`, `pi-tools.write`, and other helpers were allowed to read/write anywhere the host OS permitted.
 - The default `tools.fs.workspaceOnly` guard is `false`, so any `shieldclaw`-style run invoked a tool that could read `/Users/**` (or `/root` on Linux) without restriction if the profile did not turn `workspaceOnly` on.
-- The only place Access Zones lived was the agent’s configuration JSON file, which meant an attacker with workspace write permission could rewrite `security.accessZones` and disable enforcement.
+- The only place Access Zones lived was the agent's configuration JSON file, which meant an attacker with workspace write permission could rewrite `security.accessZones` and disable enforcement.
 
-These gaps meant an agent (main or spawned subagent) could escalate from the workspace into the rest of the user’s home directory and exfiltrate files just by invoking the bundled read/write tools. That’s unacceptable when the CLI is meant to keep end-user data local.
+These gaps meant an agent (main or spawned subagent) could escalate from the workspace into the rest of the user's home directory and exfiltrate files just by invoking the bundled read/write tools. That's unacceptable when the CLI is meant to keep end-user data local.
 
 ## What ShieldClaw enforces
 
 ShieldClaw reworks the configuration so the allowlist can no longer be tampered with by the agent tooling:
 
 1. The Access Zones policy now lives in an `ACCESS_ZONES.md` located next to the `openclaw.json` file (parent directory of that config). Because the policy file is owned by the CLI runtime, the agent tooling runs with a strict workspace-only scope by default, and no tool can write back to `ACCESS_ZONES.md` even if it has `write` privileges elsewhere.
-2. The default policy is “workspace-only” with `enforce: true`, `defaultMode: "deny"`, and `roots` locked to the workspace directory, so launching `shieldclaw` without touching your config already prevents arbitrary host reads.
+2. The default policy is "workspace-only" with "enforce: true", `defaultMode: "deny"`, and `roots` locked to the workspace directory, so launching `shieldclaw` without touching your config already prevents arbitrary host reads.
 3. `ACCESS_ZONES.md` is created during initialization with symlink-aware canonicalization so symlink attacks can’t escape the root, and the file is governed by `chmod` semantics that the tools cannot override.
 4. The agent tooling now refuses to touch host files unless the policy explicitly lists them and the principal has the right scope. The `pi-tools` helpers, `apply-patch`, and workspace-specific subagent launcher all check `authorizePathAccess` again the Access Zones data before any IO operation occurs.
 

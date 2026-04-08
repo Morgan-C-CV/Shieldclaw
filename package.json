@@ -1,6 +1,6 @@
 {
   "name": "shieldclaw",
-  "version": "2026.4.8",
+  "version": "2026.4.81",
   "description": "Security-hardened fork of OpenClaw for untrusted CLI environments, enforcing strict workspace-only agent sandboxing.",
   "keywords": [],
   "homepage": "https://github.com/Morgan-C-CV/Shieldclaw#readme",
@@ -28,6 +28,7 @@
     "assets/",
     "dist/",
     "!dist/**/*.map",
+    "!**/node_modules/**",
     "docs/",
     "!docs/.generated/**",
     "!docs/.i18n/zh-CN.tm.jsonl",
