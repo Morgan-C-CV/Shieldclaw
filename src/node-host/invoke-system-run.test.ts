@@ -34,11 +34,36 @@ describe("formatSystemRunAllowlistMissMessage", () => {
 describe("handleSystemRunInvoke mac app exec host routing", () => {
   let testOpenClawHome = "";
   let previousOpenClawHome: string | undefined;
+  let previousConfigPath: string | undefined;
+
+  function writeDisabledAccessZonesPolicy() {
+    const configPath = process.env.OPENCLAW_CONFIG_PATH;
+    if (!configPath) {
+      return;
+    }
+    const policyPath = path.join(path.dirname(configPath), "ACCESS_ZONES.md");
+    fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+    fs.writeFileSync(
+      policyPath,
+      [
+        "# OpenClaw Access Zones",
+        "",
+        "```json5",
+        JSON.stringify({ enabled: false }, null, 2),
+        "```",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+  }
 
   beforeEach(() => {
     previousOpenClawHome = process.env.OPENCLAW_HOME;
+    previousConfigPath = process.env.OPENCLAW_CONFIG_PATH;
     testOpenClawHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-node-host-home-"));
     process.env.OPENCLAW_HOME = testOpenClawHome;
+    process.env.OPENCLAW_CONFIG_PATH = path.join(testOpenClawHome, "openclaw.json");
+    writeDisabledAccessZonesPolicy();
     clearRuntimeConfigSnapshot();
   });
 
@@ -48,6 +73,11 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
       delete process.env.OPENCLAW_HOME;
     } else {
       process.env.OPENCLAW_HOME = previousOpenClawHome;
+    }
+    if (previousConfigPath === undefined) {
+      delete process.env.OPENCLAW_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
     }
     if (testOpenClawHome) {
       fs.rmSync(testOpenClawHome, { recursive: true, force: true });
@@ -1712,5 +1742,115 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  describe("access zone enforcement for exec cwd", () => {
+    async function writeAccessZonesPolicy(accessZones: Record<string, unknown>) {
+      const { resolveAccessZonesPolicyPath } = await import("../infra/access-zones-policy-file.js");
+      const policyPath = resolveAccessZonesPolicyPath();
+      fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+      fs.writeFileSync(
+        policyPath,
+        [
+          "# OpenClaw Access Zones",
+          "",
+          "```json5",
+          JSON.stringify(accessZones, null, 2),
+          "```",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+    }
+
+    it("denies exec when cwd is outside authorized access zones", async () => {
+      const zoneRoot = path.join(testOpenClawHome, "zone-allowed");
+      const outsideDir = path.join(testOpenClawHome, "zone-outside");
+      fs.mkdirSync(zoneRoot, { recursive: true });
+      fs.mkdirSync(outsideDir, { recursive: true });
+
+      await writeAccessZonesPolicy({
+        enabled: true,
+        enforce: true,
+        defaultMode: "deny",
+        zones: [
+          {
+            id: "workspace",
+            kind: "filesystem",
+            roots: [zoneRoot],
+            principals: {
+              "runtime:agent": ["read", "write"],
+            },
+          },
+        ],
+      });
+
+      const { runCommand, sendInvokeResult, sendNodeEvent } = await runSystemInvoke({
+        preferMacAppExecHost: false,
+        command: ["echo", "SHOULD_NOT_RUN"],
+        cwd: outsideDir,
+      });
+
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(sendNodeEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        "exec.denied",
+        expect.objectContaining({ reason: "access-zone-denied" }),
+      );
+      expectInvokeErrorMessage(sendInvokeResult, {
+        message: "SYSTEM_RUN_DENIED: exec working directory is outside authorized access zones",
+      });
+    });
+
+    it("allows exec when cwd is inside an authorized access zone", async () => {
+      const zoneRoot = path.join(testOpenClawHome, "zone-ok");
+      fs.mkdirSync(zoneRoot, { recursive: true });
+
+      await writeAccessZonesPolicy({
+        enabled: true,
+        enforce: true,
+        defaultMode: "deny",
+        zones: [
+          {
+            id: "workspace",
+            kind: "filesystem",
+            roots: [zoneRoot],
+            principals: {
+              "runtime:agent": ["read", "write"],
+            },
+          },
+        ],
+      });
+
+      const { runCommand, sendInvokeResult } = await runSystemInvoke({
+        preferMacAppExecHost: false,
+        command: ["echo", "SAFE"],
+        cwd: zoneRoot,
+      });
+
+      expect(runCommand).toHaveBeenCalledTimes(1);
+      expectInvokeOk(sendInvokeResult);
+    });
+
+    it("allows exec in legacy-allow mode when cwd does not match any zone", async () => {
+      const outsideDir = path.join(testOpenClawHome, "zone-legacy");
+      fs.mkdirSync(outsideDir, { recursive: true });
+
+      await writeAccessZonesPolicy({
+        enabled: true,
+        enforce: true,
+        defaultMode: "legacy-allow",
+        zones: [],
+      });
+
+      const { runCommand, sendInvokeResult } = await runSystemInvoke({
+        preferMacAppExecHost: false,
+        command: ["echo", "LEGACY"],
+        cwd: outsideDir,
+      });
+
+      expect(runCommand).toHaveBeenCalledTimes(1);
+      expectInvokeOk(sendInvokeResult);
+    });
   });
 });

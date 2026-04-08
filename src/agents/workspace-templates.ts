@@ -42,7 +42,9 @@ export async function resolveWorkspaceTemplateDir(opts?: {
       }
     }
 
-    cachedTemplateDir = candidates[0] ?? FALLBACK_TEMPLATE_DIR;
+    // Keep the missing-template error anchored to the built-in fallback path
+    // instead of an unrelated caller cwd that happened to be searched earlier.
+    cachedTemplateDir = FALLBACK_TEMPLATE_DIR;
     return cachedTemplateDir;
   })();
 

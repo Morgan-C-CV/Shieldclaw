@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import path from "node:path";
 import { resolveAgentConfig } from "../agents/agent-scope.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, type OpenClawConfig } from "../config/config.js";
 import type { GatewayClient } from "../gateway/client.js";
+import { authorizePathAccess } from "../infra/access-zones.js";
 import {
   addDurableCommandApproval,
   hasDurableExecApproval,
@@ -64,7 +66,8 @@ type SystemRunDeniedReason =
   | "allowlist-miss"
   | "execution-plan-miss"
   | "companion-unavailable"
-  | "permission:screenRecording";
+  | "permission:screenRecording"
+  | "access-zone-denied";
 
 type SystemRunExecutionContext = {
   sessionKey: string;
@@ -135,6 +138,7 @@ function normalizeDeniedReason(reason: string | null | undefined): SystemRunDeni
     case "execution-plan-miss":
     case "companion-unavailable":
     case "permission:screenRecording":
+    case "access-zone-denied":
       return reason;
     default:
       return "approval-required";
@@ -311,11 +315,44 @@ async function parseSystemRunPhase(
   };
 }
 
+async function enforceExecAccessZone(
+  cfg: OpenClawConfig,
+  parsed: SystemRunParsePhase,
+): Promise<{ reason: SystemRunDeniedReason; message: string } | null> {
+  const effectiveCwd = parsed.cwd ? path.resolve(parsed.cwd) : process.cwd();
+  const result = await authorizePathAccess({
+    config: cfg,
+    action: "write",
+    path: effectiveCwd,
+    principal: {
+      sessionKey: parsed.sessionKey,
+      agentId: parsed.agentId,
+    },
+  });
+  if (result.ok) {
+    return null;
+  }
+  return {
+    reason: "access-zone-denied",
+    message:
+      `SYSTEM_RUN_DENIED: exec working directory is outside authorized access zones. ` +
+      result.message,
+  };
+}
+
 async function evaluateSystemRunPolicyPhase(
   opts: HandleSystemRunInvokeOptions,
   parsed: SystemRunParsePhase,
 ): Promise<SystemRunPolicyPhase | null> {
   const cfg = loadConfig();
+
+  // --- Access Zone enforcement: require exec cwd inside an authorized zone ---
+  const accessZoneDenial = await enforceExecAccessZone(cfg, parsed);
+  if (accessZoneDenial) {
+    await sendSystemRunDenied(opts, parsed.execution, accessZoneDenial);
+    return null;
+  }
+
   const agentExec = parsed.agentId
     ? resolveAgentConfig(cfg, parsed.agentId)?.tools?.exec
     : undefined;

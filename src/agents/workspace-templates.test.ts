@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   resetWorkspaceTemplateDirCache,
@@ -26,7 +26,7 @@ describe("resolveWorkspaceTemplateDir", () => {
 
   it("resolves templates from package root when module url is dist-rooted", async () => {
     const root = await makeTempRoot();
-    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "openclaw" }));
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "shieldclaw" }));
 
     const templatesDir = path.join(root, "docs", "reference", "templates");
     await fs.mkdir(templatesDir, { recursive: true });
@@ -40,15 +40,17 @@ describe("resolveWorkspaceTemplateDir", () => {
     expect(resolved).toBe(templatesDir);
   });
 
-  it("falls back to package-root docs path when templates directory is missing", async () => {
+  it("falls back to the built-in template path when package-root templates are missing", async () => {
     const root = await makeTempRoot();
-    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "openclaw" }));
+    await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "shieldclaw" }));
 
     const distDir = path.join(root, "dist");
     await fs.mkdir(distDir, { recursive: true });
     const moduleUrl = pathToFileURL(path.join(distDir, "model-selection.mjs")).toString();
 
     const resolved = await resolveWorkspaceTemplateDir({ cwd: distDir, moduleUrl });
-    expect(path.normalize(resolved)).toBe(path.resolve("docs", "reference", "templates"));
+    expect(path.normalize(resolved)).toBe(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../docs/reference/templates"),
+    );
   });
 });

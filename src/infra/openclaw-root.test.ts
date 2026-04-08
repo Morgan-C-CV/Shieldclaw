@@ -27,7 +27,7 @@ function setFile(p: string, content = "") {
   state.entries.set(abs(p), { kind: "file", content });
 }
 
-function setPackageRoot(root: string, name = "openclaw") {
+function setPackageRoot(root: string, name = "shieldclaw") {
   setFile(path.join(root, "package.json"), JSON.stringify({ name }));
 }
 
@@ -126,17 +126,25 @@ describe("resolveOpenClawPackageRoot", () => {
       name: "resolves package root from .bin argv1",
       setup: () => {
         const project = fx("bin-scenario");
-        const argv1 = path.join(project, "node_modules", ".bin", "openclaw");
-        const pkgRoot = path.join(project, "node_modules", "openclaw");
+        const argv1 = path.join(project, "node_modules", ".bin", "shieldclaw");
+        const pkgRoot = path.join(project, "node_modules", "shieldclaw");
         setPackageRoot(pkgRoot);
         return { opts: { argv1 }, expected: pkgRoot };
+      },
+    },
+    {
+      name: "accepts legacy openclaw package roots for compatibility",
+      setup: () => {
+        const pkgRoot = fx("legacy-openclaw");
+        setPackageRoot(pkgRoot, "openclaw");
+        return { opts: { cwd: pkgRoot }, expected: pkgRoot };
       },
     },
     {
       name: "resolves package root via symlinked argv1",
       setup: () => {
         const project = fx("symlink-scenario");
-        const bin = path.join(project, "bin", "openclaw");
+        const bin = path.join(project, "bin", "shieldclaw");
         const realPkg = path.join(project, "real-pkg");
         state.realpaths.set(abs(bin), abs(path.join(realPkg, "openclaw.mjs")));
         setPackageRoot(realPkg);
@@ -147,8 +155,8 @@ describe("resolveOpenClawPackageRoot", () => {
       name: "falls back when argv1 realpath throws",
       setup: () => {
         const project = fx("realpath-throw-scenario");
-        const argv1 = path.join(project, "node_modules", ".bin", "openclaw");
-        const pkgRoot = path.join(project, "node_modules", "openclaw");
+        const argv1 = path.join(project, "node_modules", ".bin", "shieldclaw");
+        const pkgRoot = path.join(project, "node_modules", "shieldclaw");
         state.realpathErrors.add(abs(argv1));
         setPackageRoot(pkgRoot);
         return { opts: { argv1 }, expected: pkgRoot };
@@ -166,11 +174,11 @@ describe("resolveOpenClawPackageRoot", () => {
       },
     },
     {
-      name: "falls through from a non-openclaw moduleUrl candidate to cwd",
+      name: "falls through from a non-core moduleUrl candidate to cwd",
       setup: () => {
         const wrongPkgRoot = fx("moduleurl-fallthrough", "wrong");
         const cwdPkgRoot = fx("moduleurl-fallthrough", "cwd");
-        setPackageRoot(wrongPkgRoot, "not-openclaw");
+        setPackageRoot(wrongPkgRoot, "not-core-package");
         setPackageRoot(cwdPkgRoot);
         return {
           opts: {
@@ -193,10 +201,10 @@ describe("resolveOpenClawPackageRoot", () => {
       },
     },
     {
-      name: "returns null for non-openclaw package roots",
+      name: "returns null for non-core package roots",
       setup: () => {
-        const pkgRoot = fx("not-openclaw");
-        setPackageRoot(pkgRoot, "not-openclaw");
+        const pkgRoot = fx("not-core-package");
+        setPackageRoot(pkgRoot, "not-core-package");
         return { opts: { cwd: pkgRoot }, expected: null };
       },
     },
@@ -204,12 +212,12 @@ describe("resolveOpenClawPackageRoot", () => {
       name: "falls back from a symlinked argv1 to the node_modules package root",
       setup: () => {
         const project = fx("symlink-node-modules-fallback");
-        const argv1 = path.join(project, "node_modules", ".bin", "openclaw");
+        const argv1 = path.join(project, "node_modules", ".bin", "shieldclaw");
         state.realpaths.set(
           abs(argv1),
           abs(path.join(project, "versions", "current", "openclaw.mjs")),
         );
-        const pkgRoot = path.join(project, "node_modules", "openclaw");
+        const pkgRoot = path.join(project, "node_modules", "shieldclaw");
         setPackageRoot(pkgRoot);
         return { opts: { argv1 }, expected: pkgRoot };
       },
